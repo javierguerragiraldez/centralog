@@ -75,4 +75,24 @@ class Centraloger(object):
 			rec.msg))).hexdigest()
 
 
+	def getEvent():
+		'''processes a single event; returns (msg, args)'''
+		with self.conn.pipeline() as p:
+			p.watch (SORTED_LIST)
+			evtkey = p.lpop(SORTED_LIST)
+			if evtkey:
+				return p.hmget(evtkey, 'msg', 'args')
+			# SORTED_LIST was empty, build it
+
+			p.watch(PENDING_LIST)
+			timestampkey = lpop(PENDING_LIST)
+			if not timestampkey:
+				# no more events
+				return None
+			p.watch(timestampkey)
+			p.multi()
+			p.sort(timestampkey, by='*->time', store=SORTED_LIST)
+			p.delete(timestampkey)
+			p.execute()
+
 
