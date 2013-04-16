@@ -9,16 +9,16 @@ report event algorithm:
 - get a timestamp key from the current second.
 
 - get an event grouping key. should be the same for repeating events.  for example
-a hash of (msg,line)
+a hash of (module,file,line,msg)
 
 - ZINCRBY timestamp 1 groupkey
 
-- if the result is >1, it's a repeated event, stop here
+- if the result is >1, it's a repeated event, end here
 
 - if the result is 1, it's the first time we see this event on this second, store the
 event data using the grouping key.  include a higher resolution time (miliseconds,
 or maybe be a monotonic counter)
-		HMSET "event:"grouping "time" hirestime "msg" msg "args" jsonencode(args)
+		HMSET grouping "time" hirestime "msg" msg "args" jsonencode(args)
 
 - if (ZCARD timestamp) == 1 then this was the first event this second: add the timestamp
 to a list.
@@ -32,13 +32,47 @@ on a transaction:
 - pop the first timestamp key from the pending list
 
 - sort the events on this second:
-	SORT timestamp BY event:*->time GET event:*->msg GET event:*->args
+	SORT timestamp BY *->time GET *->msg GET *->args
 	(maybe using STORE to avoid reading everything at once?)
 
 - clear the timestamp key
 
 """
 
+import json
+from hashlib import sha1
 
-def logEvent(rec):
-	'''Stores an event. [rec] should be a LogRecord object'''
+class Centraloger(object):
+
+	def __init__(self, conn):
+		self.conn = conn
+
+	def logEvent(rec):
+		'''Stores an event. [rec] should be a LogRecord object'''
+		timestampkey = self._ts_key(rec.created)
+		groupkey = self._grp_key(rec)
+
+		r = self.conn.zincrby(timestampkey, 1, groupkey)
+		if f <= 1:
+			self.conn.hmset(groupkey, {
+				'time': rec.created,
+				'msg': rec.msg,
+				'args': json.dumps(reg.args),
+			})
+			if self.conn.zcard(timestampkey) <= 1:
+				self.conn.rpush(PENDING_LIST, timestampkey)
+
+	@staticmethod
+	def _ts_key(t):
+		return 'ts:%d' % int(t)
+
+	@staticmethod
+	def _grp_key(rec):
+		return sha1(':'.join((
+			rec.module,
+			rec.filename,
+			str(rec.lineno),
+			rec.msg))).hexdigest()
+
+
+
