@@ -53,21 +53,21 @@ class Centraloger(object):
 	def __init__(self, conn):
 		self.conn = conn
 
-	def logEvent(rec):
+	def logEvent(self, rec):
 		'''Stores an event. [rec] should be a LogRecord object'''
 		timestampkey = self._ts_key(rec.created)
 		groupkey = self._grp_key(rec, timestampkey)
 
-		r = self.conn.zincrby(timestampkey, 1, groupkey)
-		if f <= 1:
+		r = self.conn.zincrby(timestampkey, groupkey, 1.0)
+		if r <= 1.0:
 			self.conn.hmset(groupkey, {
 				'time': rec.created,
 				'timestampkey': timestampkey,
 				'msg': rec.msg,
-				'args': json.dumps(reg.args),
+				'args': json.dumps(rec.args),
 			})
-			if self.conn.zcard(timestampkey) <= 1:
-				self.conn.rpush(PENDING_LIST, timestampkey)
+			if self.conn.zcard(timestampkey) <= 1.0:
+				self.conn.rpush(self.PENDING_LIST, timestampkey)
 
 	@staticmethod
 	def _ts_key(t):
@@ -83,33 +83,33 @@ class Centraloger(object):
 			timestampkey,
 			))).hexdigest()
 
-	def getEvent():
+	def getEvent(self):
 		'''processes a single event'''
 		with self.conn.pipeline() as p:
 			while 1:
 				try:
-					p.watch (SORTED_LIST)
-					evtkey = p.lpop(SORTED_LIST)
+					p.watch (self.SORTED_LIST)
+					evtkey = p.lpop(self.SORTED_LIST)
 					if evtkey:
 						# got an event key, retrieve and remove data
 						evt = p.hgetall(evtkey)
 						if 'timestampkey' in evt:
 							evt['repeats'] = p.zscore(evt['timestampkey'], evtkey)
 						p.multi()
-							p.delete(evtkey)
-							if 'timestampkey' in evt:
-								p.zrem(evt['timestampkey'], evtkey)
+						p.delete(evtkey)
+						if 'timestampkey' in evt:
+							p.zrem(evt['timestampkey'], evtkey)
 						return evt
 
 					# SORTED_LIST was empty, build it
-					p.watch(PENDING_LIST)
-					timestampkey = lpop(PENDING_LIST)
+					p.watch(self.PENDING_LIST)
+					timestampkey = p.lpop(self.PENDING_LIST)
 					if not timestampkey:
 						# no more events
 						return None
 					p.watch(timestampkey)
 					p.multi()
-					p.sort(timestampkey, by='*->time', store=SORTED_LIST)
+					p.sort(timestampkey, by='*->time', store=self.SORTED_LIST)
 					p.execute()
 					# now retry to get first event from SORTED_LIST
 				except WatchError:
