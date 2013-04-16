@@ -64,7 +64,7 @@ class Centraloger(object):
 				'time': rec.created,
 				'timestampkey': timestampkey,
 				'msg': rec.msg,
-				'args': json.dumps(rec.args),
+				'args': json.dumps(rec.__dict__),
 			})
 			if self.conn.zcard(timestampkey) <= 1:
 				self.conn.rpush(self.PENDING_LIST, timestampkey)
@@ -101,6 +101,7 @@ class Centraloger(object):
 						if 'timestampkey' in evt:
 							p.zrem(evt['timestampkey'], evtkey)
 						p.execute()
+						evt['args'] = json.loads(evt['args'])
 						return evt
 
 					# SORTED_LIST was empty, build it

@@ -2,7 +2,7 @@ import sys, time
 import logging
 import redis
 from common import Centraloger
-
+from log_adapters import CentralogHandler
 
 _conn = redis.Redis()
 
@@ -94,6 +94,7 @@ def test_spaced_events():
 	}))
 
 	# wait a little, so third event isn't grouped with first
+	print '...sleep...'
 	time.sleep(1.5)
 
 	logger.logEvent(logging.makeLogRecord({
@@ -119,11 +120,52 @@ def test_spaced_events():
 
 	print sys._getframe(0).f_code.co_name, 'ok.'
 
+
+def setup_python_logger():
+	handler = CentralogHandler(Centraloger(_conn))
+	logger = logging.getLogger('test')
+	logger.addHandler(handler)
+	print sys._getframe(0).f_code.co_name, 'ok.'
+
+
+def test_log_as_log():
+	logger = logging.getLogger('test')
+	logger.warning('doing something', exc_info=True)
+
+	l = Centraloger(_conn)
+	evt = l.getEvent()
+	evt = logging.makeLogRecord(evt['args'])
+	assert evt.exc_text=='None'
+
+	print sys._getframe(0).f_code.co_name, 'ok.'
+
+
+def test_in_exception():
+	try:
+		print 0/0
+	except:
+		logger = logging.getLogger('test')
+		logger.error('something\'s wrong?', exc_info=True)
+
+	l = Centraloger(_conn)
+	evt = l.getEvent()
+	evt = logging.makeLogRecord(evt['args'])
+	print evt.message
+	print evt.exc_text
+	assert evt.exc_text != None
+
+	print sys._getframe(0).f_code.co_name, 'ok.'
+
+
 if __name__ == '__main__':
 	setup_module()
 	test_empty_gather()
 	test_one_event()
 	test_repeated_event()
 	test_spaced_events()
+
+	setup_python_logger()
+	test_log_as_log()
+	test_in_exception()
 
 
