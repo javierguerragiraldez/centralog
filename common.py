@@ -66,7 +66,7 @@ class Centraloger(object):
 				'msg': rec.msg,
 				'args': json.dumps(rec.args),
 			})
-			if self.conn.zcard(timestampkey) <= 1.0:
+			if self.conn.zcard(timestampkey) <= 1:
 				self.conn.rpush(self.PENDING_LIST, timestampkey)
 
 	@staticmethod
@@ -89,26 +89,29 @@ class Centraloger(object):
 			while 1:
 				try:
 					p.watch (self.SORTED_LIST)
-					evtkey = p.lpop(self.SORTED_LIST)
+					evtkey = p.lindex(self.SORTED_LIST, 0)
 					if evtkey:
 						# got an event key, retrieve and remove data
 						evt = p.hgetall(evtkey)
 						if 'timestampkey' in evt:
 							evt['repeats'] = p.zscore(evt['timestampkey'], evtkey)
 						p.multi()
+						p.lpop(self.SORTED_LIST)
 						p.delete(evtkey)
 						if 'timestampkey' in evt:
 							p.zrem(evt['timestampkey'], evtkey)
 						return evt
 
 					# SORTED_LIST was empty, build it
+					p.unwatch()
 					p.watch(self.PENDING_LIST)
-					timestampkey = p.lpop(self.PENDING_LIST)
+					timestampkey = p.lindex(self.PENDING_LIST, 0)
 					if not timestampkey:
 						# no more events
 						return None
 					p.watch(timestampkey)
 					p.multi()
+					p.lpop(self.PENDING_LIST)
 					p.sort(timestampkey, by='*->time', store=self.SORTED_LIST)
 					p.execute()
 					# now retry to get first event from SORTED_LIST
