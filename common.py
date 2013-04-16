@@ -100,6 +100,7 @@ class Centraloger(object):
 						p.delete(evtkey)
 						if 'timestampkey' in evt:
 							p.zrem(evt['timestampkey'], evtkey)
+						p.execute()
 						return evt
 
 					# SORTED_LIST was empty, build it
