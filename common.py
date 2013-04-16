@@ -17,25 +17,28 @@ a hash of (module,file,line,msg)
 
 - if the result is 1, it's the first time we see this event on this second, store the
 event data using the grouping key.  include a higher resolution time (miliseconds,
-or maybe be a monotonic counter)
-		HMSET grouping "time" hirestime "msg" msg "args" jsonencode(args)
+or maybe be a monotonic counter), and also the timestamp key
 
 - if (ZCARD timestamp) == 1 then this was the first event this second: add the timestamp
-to a list.
+to a list, with a known name PENDING_LIST.
 
 
 
 gather event algorithm:
 
-on a transaction:
+- first check the SORTED_LIST for an event key
 
-- pop the first timestamp key from the pending list
+	- if found, get data from a HASH object with that key (including the
+	timestampkey to get the related ZSET)
 
-- sort the events on this second:
-	SORT timestamp BY *->time GET *->msg GET *->args
-	(maybe using STORE to avoid reading everything at once?)
+	- check number of repetitions as the ZSET score.
 
-- clear the timestamp key
+	- remove the grouping key from the ZSET
+
+- if the SORTED_LIST was empty, check the PENDING_LIST to get the next timestampkey
+
+- refill SORTED_LIST by sorting the ZSET by the hires time stored in the HASH objects.
+
 
 """
 
@@ -53,12 +56,13 @@ class Centraloger(object):
 	def logEvent(rec):
 		'''Stores an event. [rec] should be a LogRecord object'''
 		timestampkey = self._ts_key(rec.created)
-		groupkey = self._grp_key(rec)
+		groupkey = self._grp_key(rec, timestampkey)
 
 		r = self.conn.zincrby(timestampkey, 1, groupkey)
 		if f <= 1:
 			self.conn.hmset(groupkey, {
 				'time': rec.created,
+				'timestampkey': timestampkey,
 				'msg': rec.msg,
 				'args': json.dumps(reg.args),
 			})
@@ -70,24 +74,34 @@ class Centraloger(object):
 		return 'ts:%d' % int(t)
 
 	@staticmethod
-	def _grp_key(rec):
+	def _grp_key(rec, timestampkey):
 		return sha1(':'.join((
 			rec.module,
 			rec.filename,
 			str(rec.lineno),
-			rec.msg))).hexdigest()
+			rec.msg,
+			timestampkey,
+			))).hexdigest()
 
 	def getEvent():
-		'''processes a single event; returns (time, msg, args)'''
+		'''processes a single event'''
 		with self.conn.pipeline() as p:
 			while 1:
 				try:
 					p.watch (SORTED_LIST)
 					evtkey = p.lpop(SORTED_LIST)
 					if evtkey:
-						return p.hmget(evtkey, 'time', 'msg', 'args')
-					# SORTED_LIST was empty, build it
+						# got an event key, retrieve and remove data
+						evt = p.hgetall(evtkey)
+						if 'timestampkey' in evt:
+							evt['repeats'] = p.zscore(evt['timestampkey'], evtkey)
+						p.multi()
+							p.delete(evtkey)
+							if 'timestampkey' in evt:
+								p.zrem(evt['timestampkey'], evtkey)
+						return evt
 
+					# SORTED_LIST was empty, build it
 					p.watch(PENDING_LIST)
 					timestampkey = lpop(PENDING_LIST)
 					if not timestampkey:
@@ -96,8 +110,8 @@ class Centraloger(object):
 					p.watch(timestampkey)
 					p.multi()
 					p.sort(timestampkey, by='*->time', store=SORTED_LIST)
-					p.delete(timestampkey)
 					p.execute()
+					# now retry to get first event from SORTED_LIST
 				except WatchError:
 					continue
 
