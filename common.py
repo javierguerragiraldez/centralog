@@ -41,6 +41,7 @@ on a transaction:
 
 import json
 from hashlib import sha1
+from redis import WatchError
 
 class Centraloger(object):
 
@@ -78,21 +79,25 @@ class Centraloger(object):
 	def getEvent():
 		'''processes a single event; returns (msg, args)'''
 		with self.conn.pipeline() as p:
-			p.watch (SORTED_LIST)
-			evtkey = p.lpop(SORTED_LIST)
-			if evtkey:
-				return p.hmget(evtkey, 'msg', 'args')
-			# SORTED_LIST was empty, build it
+			while 1:
+				try:
+					p.watch (SORTED_LIST)
+					evtkey = p.lpop(SORTED_LIST)
+					if evtkey:
+						return p.hmget(evtkey, 'msg', 'args')
+					# SORTED_LIST was empty, build it
 
-			p.watch(PENDING_LIST)
-			timestampkey = lpop(PENDING_LIST)
-			if not timestampkey:
-				# no more events
-				return None
-			p.watch(timestampkey)
-			p.multi()
-			p.sort(timestampkey, by='*->time', store=SORTED_LIST)
-			p.delete(timestampkey)
-			p.execute()
+					p.watch(PENDING_LIST)
+					timestampkey = lpop(PENDING_LIST)
+					if not timestampkey:
+						# no more events
+						return None
+					p.watch(timestampkey)
+					p.multi()
+					p.sort(timestampkey, by='*->time', store=SORTED_LIST)
+					p.delete(timestampkey)
+					p.execute()
+				except WatchError:
+					continue
 
 
