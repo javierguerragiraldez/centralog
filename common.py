@@ -44,6 +44,8 @@ from hashlib import sha1
 from redis import WatchError
 
 class Centraloger(object):
+	PENDING_LIST = '__PENDING_LIST__'
+	SORTED_LIST = '__SORTED_LIST__'
 
 	def __init__(self, conn):
 		self.conn = conn
@@ -75,16 +77,15 @@ class Centraloger(object):
 			str(rec.lineno),
 			rec.msg))).hexdigest()
 
-
 	def getEvent():
-		'''processes a single event; returns (msg, args)'''
+		'''processes a single event; returns (time, msg, args)'''
 		with self.conn.pipeline() as p:
 			while 1:
 				try:
 					p.watch (SORTED_LIST)
 					evtkey = p.lpop(SORTED_LIST)
 					if evtkey:
-						return p.hmget(evtkey, 'msg', 'args')
+						return p.hmget(evtkey, 'time', 'msg', 'args')
 					# SORTED_LIST was empty, build it
 
 					p.watch(PENDING_LIST)
